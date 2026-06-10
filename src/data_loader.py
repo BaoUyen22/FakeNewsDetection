@@ -1,11 +1,9 @@
 from __future__ import annotations
-
 import argparse
 import json
 import re
 import unicodedata
 from pathlib import Path
-
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
@@ -24,6 +22,45 @@ class DataLoader:
         self.raw_dir = Path(raw_dir)
         self.processed_dir = Path(processed_dir)
         self.random_state = random_state
+
+    def analyze_subject_distribution(
+        self,
+        fake_filename: str = "Fake.csv",
+        true_filename: str = "True.csv",
+    ) -> dict:
+        """
+        Thống kê phân phối cột 'subject' từ Fake.csv và True.csv
+        """
+        fake_path = self.raw_dir / fake_filename
+        true_path = self.raw_dir / true_filename
+
+        if not fake_path.exists() or not true_path.exists():
+            return {"error": "Missing raw data files"}
+
+        fake_df = pd.read_csv(fake_path)
+        true_df = pd.read_csv(true_path)
+
+        result = {}
+        
+        if "subject" in fake_df.columns:
+            fake_subjects = fake_df["subject"].value_counts().to_dict()
+            result["Fake.csv"] = {
+                "total": len(fake_df),
+                "subject_counts": fake_subjects,
+            }
+        else:
+            result["Fake.csv"] = {"error": "Column 'subject' not found"}
+
+        if "subject" in true_df.columns:
+            true_subjects = true_df["subject"].value_counts().to_dict()
+            result["True.csv"] = {
+                "total": len(true_df),
+                "subject_counts": true_subjects,
+            }
+        else:
+            result["True.csv"] = {"error": "Column 'subject' not found"}
+
+        return result
 
     def load_raw_data(
         self,
@@ -49,8 +86,20 @@ class DataLoader:
 
         fake_df = fake_df.copy()
         true_df = true_df.copy()
+        
+        # Xóa cột subject và date để tránh data leakage
+        fake_df = fake_df.drop(columns=["subject", "date"], errors="ignore")
+        true_df = true_df.drop(columns=["subject", "date"], errors="ignore")
+        
+        # Bỏ Reuters tag trong text (thường có trong True.csv)
+        fake_df["text"] = fake_df["text"].str.replace(r"^.*?\(Reuters\)\s*[-–]\s*", "", regex=True)
+        true_df["text"] = true_df["text"].str.replace(r"^.*?\(Reuters\)\s*[-–]\s*", "", regex=True)
+        
         fake_df["label"] = 1
         true_df["label"] = 0
+        
+        fake_df = fake_df[["title", "text", "label"]]
+        true_df = true_df[["title", "text", "label"]]
 
         return pd.concat([fake_df, true_df], ignore_index=True)
 
@@ -68,6 +117,10 @@ class DataLoader:
         return value
 
     def preprocess_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Áp dụng cleaning cho từng split riêng biệt (sau khi đã split)
+        Clean riêng title và text để có thể train riêng hoặc kết hợp
+        """
         data = df.copy()
 
         if "title" not in data.columns:
@@ -77,51 +130,83 @@ class DataLoader:
 
         data["title"] = data["title"].fillna("").astype(str)
         data["text"] = data["text"].fillna("").astype(str)
-        data["raw_text"] = (data["title"] + " " + data["text"]).str.strip()
+        
+        # Clean riêng từng cột
+        data["title"] = data["title"].map(self.clean_text)
+        data["text"] = data["text"].map(self.clean_text)
+        
+        # Xóa các dòng có cả title và text đều rỗng
+        data = data[(data["title"].str.len() > 0) | (data["text"].str.len() > 0)].copy()
+        
+        # Xóa trùng lặp dựa trên cả title + text + label
+        data = data.drop_duplicates(subset=["title", "text", "label"]).reset_index(drop=True)
 
-        data["cleaned_text"] = data["raw_text"].map(self.clean_text)
-        data = data[data["cleaned_text"].str.len() > 0].copy()
-        data = data.drop_duplicates(subset=["cleaned_text", "label"]).reset_index(drop=True)
+        # Giữ 3 cột: title (cleaned), text (cleaned), label
+        return data[["title", "text", "label"]]
 
-        ordered_cols = ["cleaned_text", "label", "title", "text"]
-        optional_cols = [col for col in ("subject", "date") if col in data.columns]
-        return data[ordered_cols + optional_cols]
-
-    def split_data(self, df: pd.DataFrame, test_size: float = 0.2) -> tuple[pd.DataFrame, pd.DataFrame]:
-        train_df, test_df = train_test_split(
+    def split_data(
+        self, df: pd.DataFrame, val_size: float = 0.1, test_size: float = 0.1
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """
+        Split data TRƯỚC KHI clean (chỉ split raw data)
+        train (80%), val (10%), test (10%)
+        """
+        # Tính test_size cho lần split đầu tiên
+        test_val_size = val_size + test_size  # 0.2
+        
+        # Split: train (80%) vs temp (20%)
+        train_df, temp_df = train_test_split(
             df,
-            test_size=test_size,
+            test_size=test_val_size,
             random_state=self.random_state,
             shuffle=True,
             stratify=df["label"],
         )
-        return train_df.reset_index(drop=True), test_df.reset_index(drop=True)
+        
+        # Split temp thành val (10%) và test (10%)
+        # val_size / (val_size + test_size) = 0.5 để chia đôi temp
+        val_df, test_df = train_test_split(
+            temp_df,
+            test_size=0.5,
+            random_state=self.random_state,
+            shuffle=True,
+            stratify=temp_df["label"],
+        )
+        
+        return (
+            train_df.reset_index(drop=True),
+            val_df.reset_index(drop=True),
+            test_df.reset_index(drop=True),
+        )
 
     def save_processed_data(
         self,
         train_df: pd.DataFrame,
+        val_df: pd.DataFrame,
         test_df: pd.DataFrame,
-        full_df: pd.DataFrame | None = None,
     ) -> dict[str, Path]:
+        """
+        Lưu train/val/test đã clean (KHÔNG lưu all_cleaned.csv để tránh leak)
+        """
         self.processed_dir.mkdir(parents=True, exist_ok=True)
 
         train_path = self.processed_dir / "train.csv"
+        val_path = self.processed_dir / "val.csv"
         test_path = self.processed_dir / "test.csv"
+        
         train_df.to_csv(train_path, index=False, encoding="utf-8-sig")
+        val_df.to_csv(val_path, index=False, encoding="utf-8-sig")
         test_df.to_csv(test_path, index=False, encoding="utf-8-sig")
 
-        output_paths = {"train": train_path, "test": test_path}
-
-        if full_df is not None:
-            full_path = self.processed_dir / "all_cleaned.csv"
-            full_df.to_csv(full_path, index=False, encoding="utf-8-sig")
-            output_paths["all"] = full_path
+        output_paths = {"train": train_path, "val": val_path, "test": test_path}
 
         stats = {
-            "total_rows": int((len(train_df) + len(test_df))),
+            "total_rows": int((len(train_df) + len(val_df) + len(test_df))),
             "train_rows": int(len(train_df)),
+            "val_rows": int(len(val_df)),
             "test_rows": int(len(test_df)),
             "label_distribution_train": train_df["label"].value_counts().sort_index().to_dict(),
+            "label_distribution_val": val_df["label"].value_counts().sort_index().to_dict(),
             "label_distribution_test": test_df["label"].value_counts().sort_index().to_dict(),
         }
         stats_path = self.processed_dir / "split_stats.json"
@@ -130,19 +215,33 @@ class DataLoader:
 
         return output_paths
 
-    def run_pipeline(self, test_size: float = 0.2) -> dict[str, Path]:
+    def run_pipeline(self, val_size: float = 0.1, test_size: float = 0.1) -> dict[str, Path]:
+        """
+        Pipeline đúng: Load → Split → Clean từng tập riêng → Save
+        """
+        # Bước 1: Load raw data 
         raw_df = self.load_raw_data()
-        clean_df = self.preprocess_data(raw_df)
-        train_df, test_df = self.split_data(clean_df, test_size=test_size)
-        return self.save_processed_data(train_df, test_df, full_df=clean_df)
+        
+        # Bước 2: Split trước 
+        train_raw, val_raw, test_raw = self.split_data(raw_df, val_size=val_size, test_size=test_size)
+        
+        # Bước 3: Clean 
+        train_clean = self.preprocess_data(train_raw)
+        val_clean = self.preprocess_data(val_raw)
+        test_clean = self.preprocess_data(test_raw)
+        
+        # Bước 4: Save 
+        return self.save_processed_data(train_clean, val_clean, test_clean)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Clean and split fake news dataset into train/test.")
+    parser = argparse.ArgumentParser(description="Clean and split fake news dataset into train/val/test.")
     parser.add_argument("--raw-dir", default="data/raw", help="Folder containing Fake.csv and True.csv")
     parser.add_argument("--processed-dir", default="data/processed", help="Output folder for processed CSV files")
-    parser.add_argument("--test-size", type=float, default=0.2, help="Test split ratio (default: 0.2)")
+    parser.add_argument("--val-size", type=float, default=0.1, help="Validation split ratio (default: 0.1)")
+    parser.add_argument("--test-size", type=float, default=0.1, help="Test split ratio (default: 0.1)")
     parser.add_argument("--random-state", type=int, default=42, help="Random seed for splitting")
+    parser.add_argument("--analyze-subject", action="store_true", help="Show subject distribution before processing")
     args = parser.parse_args()
 
     loader = DataLoader(
@@ -150,7 +249,24 @@ def main() -> None:
         processed_dir=args.processed_dir,
         random_state=args.random_state,
     )
-    outputs = loader.run_pipeline(test_size=args.test_size)
+
+    #python src/data_loader.py --analyze-subject
+    # Thống kê subject nếu được yêu cầu
+    if args.analyze_subject:
+        print("\n=== Subject Distribution Analysis ===")
+        stats = loader.analyze_subject_distribution()
+        for filename, data in stats.items():
+            print(f"\n{filename}:")
+            if "error" in data:
+                print(f"  {data['error']}")
+            else:
+                print(f"  Total rows: {data['total']}")
+                print(f"  Subject counts:")
+                for subject, count in sorted(data["subject_counts"].items(), key=lambda x: x[1], reverse=True):
+                    print(f"    {subject}: {count}")
+        print("\n" + "="*40 + "\n")
+    
+    outputs = loader.run_pipeline(val_size=args.val_size, test_size=args.test_size)
 
     print("Processed data files:")
     for name, path in outputs.items():
