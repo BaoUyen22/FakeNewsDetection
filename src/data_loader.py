@@ -128,6 +128,7 @@ class DataLoader:
         if "text" not in data.columns:
             raise ValueError("Column 'text' is required.")
 
+        # Fill NaN và convert to string
         data["title"] = data["title"].fillna("").astype(str)
         data["text"] = data["text"].fillna("").astype(str)
         
@@ -135,8 +136,19 @@ class DataLoader:
         data["title"] = data["title"].map(self.clean_text)
         data["text"] = data["text"].map(self.clean_text)
         
-        # Xóa các dòng có cả title và text đều rỗng
-        data = data[(data["title"].str.len() > 0) | (data["text"].str.len() > 0)].copy()
+        # Fill NaN sau khi clean (trong trường hợp clean_text trả về NaN)
+        data["title"] = data["title"].fillna("")
+        data["text"] = data["text"].fillna("")
+        
+        # Xóa các dòng có CẢ title VÀ text đều rỗng
+        data = data[
+            (data["title"].str.strip().str.len() > 0) | 
+            (data["text"].str.strip().str.len() > 0)
+        ].copy()
+        
+        # Nếu text rỗng nhưng title có → copy title sang text
+        mask_empty_text = data["text"].str.strip().str.len() == 0
+        data.loc[mask_empty_text, "text"] = data.loc[mask_empty_text, "title"]
         
         # Xóa trùng lặp dựa trên cả title + text + label
         data = data.drop_duplicates(subset=["title", "text", "label"]).reset_index(drop=True)
