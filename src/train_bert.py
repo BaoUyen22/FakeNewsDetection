@@ -11,10 +11,8 @@ MODEL_NAME = "distilbert-base-uncased"
 
 def train_transformer():
     # 2. Đọc dữ liệu 
-    # KHAI BÁO BIẾN data_path TRƯỚC KHI DÙNG
     data_path = "data/processed/train.csv" 
 
-    # Kiểm tra xem file có tồn tại không trước khi đọc
     if not os.path.exists(data_path):
         print(f"Lỗi: Không tìm thấy file {data_path}. Hãy kiểm tra lại thư mục data/processed/")
         return
@@ -22,20 +20,24 @@ def train_transformer():
     print(f"--- Đang đọc dữ liệu từ {data_path} ---")
     df = pd.read_csv(data_path)
     
-    # Để test nhanh ở máy cá nhân, thầy khuyên em nên lấy 200 dòng đầu để chạy thử code thôi
-    # Khi nào lên Colab thì xóa dòng .head(200) này đi
+    # 1. Xóa bỏ bất kỳ dòng nào bị trống (NaN) ở cột text hoặc label
+    df = df.dropna(subset=['text', 'label'])
+
+    # 2. Ép kiểu dữ liệu ở cột text chắc chắn phải là chuỗi (string)
+    df['text'] = df['text'].astype(str)
+
+    # Test nhanh 200 dòng
     df = df.head(200) 
     
     # 3. Chuẩn bị Dataset cho Hugging Face
-    # Sử dụng đúng tên cột 'cleaned_text' mà data_loader.py đã tạo ra
-    dataset = Dataset.from_pandas(df[['cleaned_text', 'label']])
+    dataset = Dataset.from_pandas(df[['text', 'label']])
     
     # 4. Tokenizer (Bộ băm chữ)
     print(f"--- Đang tải Tokenizer {MODEL_NAME} ---")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, cache_dir=CACHE_DIR)
 
     def tokenize_func(examples):
-        return tokenizer(examples["cleaned_text"], padding="max_length", truncation=True, max_length=128)
+        return tokenizer(examples["text"], padding="max_length", truncation=True, max_length=128)
 
     print("--- Đang Tokenize dữ liệu ---")
     tokenized_dataset = dataset.map(tokenize_func, batched=True)
@@ -48,15 +50,15 @@ def train_transformer():
         cache_dir=CACHE_DIR
     )
 
-    # 6. Cấu hình huấn luyện (Thông số nháp để test code local)
+    # 6. Cấu hình huấn luyện
     training_args = TrainingArguments(
         output_dir=OUTPUT_DIR,
-        per_device_train_batch_size=4, # Chỉnh xuống 4 cho nhẹ máy local
+        per_device_train_batch_size=4, 
         num_train_epochs=1,
         logging_steps=5,
         eval_strategy="no",
         save_strategy="no",
-        use_cpu=True # Ép chạy bằng CPU để test local cho ổn định
+        use_cpu=True 
     )
 
     # 7. Khởi tạo Trainer
