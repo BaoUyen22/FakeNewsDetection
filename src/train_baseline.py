@@ -1,200 +1,370 @@
+# Liner , TF-IDF , Logistic 
 import os
 import joblib
 import pandas as pd
-
+import time
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.metrics import (
+    accuracy_score, 
+    precision_recall_fscore_support,
+    classification_report, 
+    confusion_matrix
+)
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import LinearSVC
-from sklearn.naive_bayes import MultinomialNB
 
 
-# LOAD DATA (from data_loader)
+# =============================================================================
+# DATA LOADING
+# =============================================================================
 
 def load_data():
-    """Load train, val, test từ data/processed/"""
+    """Load train, val, test datasets"""
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-
+    
     train_path = os.path.join(base_dir, "data", "processed", "train.csv")
     val_path = os.path.join(base_dir, "data", "processed", "val.csv")
     test_path = os.path.join(base_dir, "data", "processed", "test.csv")
-
+    
     train_df = pd.read_csv(train_path)
     val_df = pd.read_csv(val_path)
     test_df = pd.read_csv(test_path)
-
+    
     return train_df, val_df, test_df
 
 
-# TRAIN MODEL
-
-def train():
-    """Train baseline models: Logistic Regression, LinearSVC, Naive Bayes"""
-    train_df, val_df, test_df = load_data()
-
-    # Sử dụng cột 'text' (đã cleaned trong data_loader)
-    # Xử lý NaN và chuỗi rỗng
-    train_df["text"] = train_df["text"].fillna("").astype(str)
-    val_df["text"] = val_df["text"].fillna("").astype(str)
-    test_df["text"] = test_df["text"].fillna("").astype(str)
+def preprocess_data(train_df, val_df, test_df):
+    """Clean and prepare data"""
+    # Handle NaN and empty strings
+    for df in [train_df, val_df, test_df]:
+        df["text"] = df["text"].fillna("").astype(str)
+        df.drop(df[df["text"].str.strip().str.len() == 0].index, inplace=True)
+        df.reset_index(drop=True, inplace=True)
     
-    # Lọc bỏ các dòng có text rỗng
-    train_df = train_df[train_df["text"].str.strip().str.len() > 0].reset_index(drop=True)
-    val_df = val_df[val_df["text"].str.strip().str.len() > 0].reset_index(drop=True)
-    test_df = test_df[test_df["text"].str.strip().str.len() > 0].reset_index(drop=True)
+    return train_df, val_df, test_df
+
+
+# =============================================================================
+# TRAINING
+# =============================================================================
+
+def train_models(X_train_tfidf, y_train):
+    """
+    Train multiple baseline models
     
-    X_train = train_df["text"]
-    y_train = train_df["label"]
-
-    X_val = val_df["text"]
-    y_val = val_df["label"]
-
-    X_test = test_df["text"]
-    y_test = test_df["label"]
-
-    print(f"Train: {len(X_train)} | Val: {len(X_val)} | Test: {len(X_test)}")
-
-    # TF-IDF Vectorizer
-    print("\n[1/4] Vectorizing text with TF-IDF...")
-    tfidf = TfidfVectorizer(
-        max_features=10000,
-        ngram_range=(1, 2),
-        min_df=2,
-        max_df=0.9
-    )
-
-    X_train_tfidf = tfidf.fit_transform(X_train)  # Fit chỉ trên TRAIN
-    X_val_tfidf = tfidf.transform(X_val)
-    X_test_tfidf = tfidf.transform(X_test)
-
-    print(f"   Vocabulary size: {len(tfidf.vocabulary_)}")
-
-    # Train multiple models
+    Returns:
+        dict: Trained models
+    """
+    print("\n" + "="*60)
+    print("TRAINING MODELS")
+    print("="*60)
+    
     models = {
         "logistic_regression": LogisticRegression(max_iter=1000, random_state=42),
-        "linear_svc": LinearSVC(max_iter=1000, random_state=42),
-        "naive_bayes": MultinomialNB()
+        "linear_svc": LinearSVC(max_iter=1000, random_state=42, dual='auto'),
     }
-
-    results = {}
-
-    for i, (name, model) in enumerate(models.items(), start=2):
-        print(f"\n[{i}/4] Training {name}...")
+    
+    trained_models = {}
+    training_times = {}
+    
+    for i, (name, model) in enumerate(models.items(), start=1):
+        print(f"\n[{i}/{len(models)}] Training {name}...")
         
-        # Train
+        start_time = time.time()
         model.fit(X_train_tfidf, y_train)
+        train_time = time.time() - start_time
         
-        # Evaluate on val
-        y_val_pred = model.predict(X_val_tfidf)
-        val_acc = accuracy_score(y_val, y_val_pred)
+        trained_models[name] = model
+        training_times[name] = train_time
         
-        # Evaluate on test
-        y_test_pred = model.predict(X_test_tfidf)
-        test_acc = accuracy_score(y_test, y_test_pred)
+        print(f"   Training time: {train_time:.2f}s")
+    
+    return trained_models, training_times
+
+
+# =============================================================================
+# VALIDATION
+# =============================================================================
+
+def evaluate_on_validation(models, X_val_tfidf, y_val):
+    """
+    Evaluate models on validation set
+    
+    Returns:
+        dict: Validation metrics for each model
+    """
+    print("\n" + "="*60)
+    print("VALIDATION EVALUATION")
+    print("="*60)
+    
+    val_results = {}
+    
+    for name, model in models.items():
+        print(f"\n{name}:")
         
-        results[name] = {
-            "val_acc": val_acc,
-            "test_acc": test_acc,
-            "y_pred": y_test_pred
+        # Predict
+        y_pred = model.predict(X_val_tfidf)
+        
+        # Metrics
+        accuracy = accuracy_score(y_val, y_pred)
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            y_val, y_pred, average='binary'
+        )
+        
+        val_results[name] = {
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1
         }
         
-        print(f"   Val Accuracy:  {val_acc:.4f}")
-        print(f"   Test Accuracy: {test_acc:.4f}")
-
-    # Print detailed report for best model
-    best_model_name = max(results.keys(), key=lambda k: results[k]["test_acc"])
-    print(f"\n{'='*60}")
-    print(f"BEST MODEL: {best_model_name}")
-    print(f"{'='*60}")
-    print(classification_report(y_test, results[best_model_name]["y_pred"], 
-                                target_names=["Real (0)", "Fake (1)"]))
-    print("\nConfusion Matrix:")
-    print(confusion_matrix(y_test, results[best_model_name]["y_pred"]))
-
-    # SAVE MODELS
-    print(f"\n{'='*60}")
-    print("SAVING MODELS...")
-    print(f"{'='*60}")
+        print(f"   Accuracy:  {accuracy:.4f}")
+        print(f"   Precision: {precision:.4f}")
+        print(f"   Recall:    {recall:.4f}")
+        print(f"   F1-Score:  {f1:.4f}")
     
-    models_dir = os.path.join(os.path.dirname(__file__), "..", "models", "baseline")
-    os.makedirs(models_dir, exist_ok=True)
+    return val_results
 
+
+# =============================================================================
+# FINAL TEST EVALUATION
+# =============================================================================
+
+def evaluate_on_test(models, X_test_tfidf, y_test):
+    """
+    Final evaluation on test set
+    
+    Returns:
+        dict: Test metrics for each model
+    """
+    print("\n" + "="*60)
+    print("FINAL TEST EVALUATION")
+    print("="*60)
+    
+    test_results = {}
+    
+    for name, model in models.items():
+        print(f"\n{name}:")
+        
+        # Predict / dự đoán
+        start_time = time.time()
+        y_pred = model.predict(X_test_tfidf)
+        inference_time = (time.time() - start_time) / len(y_test) * 1000  # ms per sample
+        
+        # Metrics / số liệu 
+        accuracy = accuracy_score(y_test, y_pred)
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            y_test, y_pred, average='binary'
+        )
+        
+        test_results[name] = {
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "y_pred": y_pred,
+            "inference_time": inference_time
+        }
+        
+        print(f"   Accuracy:  {accuracy:.4f}")
+        print(f"   Precision: {precision:.4f}")
+        print(f"   Recall:    {recall:.4f}")
+        print(f"   F1-Score:  {f1:.4f}")
+        print(f"   Inference: {inference_time:.3f}ms/sample")
+    
+    return test_results
+
+
+# =============================================================================
+# MODEL COMPARISON
+# =============================================================================
+
+def compare_models(models, train_times, val_results, test_results):
+    """
+    Compare all models using multiple criteria
+    """
+    print("\n" + "="*60)
+    print("MODEL COMPARISON")
+    print("="*60)
+    
+    print("\n📊 PERFORMANCE METRICS:")
+    print("-" * 80)
+    print(f"{'Model':<25} {'Val Acc':<12} {'Test Acc':<12} {'Precision':<12} {'Recall':<12} {'F1':<12}")
+    print("-" * 80)
+    
+    for name in models.keys():
+        val_acc = val_results[name]["accuracy"]
+        test_acc = test_results[name]["accuracy"]
+        precision = test_results[name]["precision"]
+        recall = test_results[name]["recall"]
+        f1 = test_results[name]["f1"]
+        
+        print(f"{name:<25} {val_acc:<12.4f} {test_acc:<12.4f} {precision:<12.4f} {recall:<12.4f} {f1:<12.4f}")
+    
+    print("\n⚡ EFFICIENCY METRICS:")
+    print("-" * 60)
+    print(f"{'Model':<25} {'Train Time':<15} {'Inference Time':<20}")
+    print("-" * 60)
+    
+    for name in models.keys():
+        train_time = train_times[name]
+        inference_time = test_results[name]["inference_time"]
+        
+        print(f"{name:<25} {train_time:<15.2f}s {inference_time:<20.3f}ms/sample")
+    
+    print("\n💾 MODEL SIZE:")
+    print("-" * 40)
+    print(f"{'Model':<25} {'Size':<15}")
+    print("-" * 40)
+    
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    models_dir = os.path.join(base_dir, "models", "baseline")
+    
+    for name in models.keys():
+        model_path = os.path.join(models_dir, f"{name}.pkl")
+        if os.path.exists(model_path):
+            size_mb = os.path.getsize(model_path) / (1024 * 1024)
+            print(f"{name:<25} {size_mb:<15.2f}MB")
+    
+    # TF-IDF vectorizer size
+    tfidf_path = os.path.join(models_dir, "tfidf_vectorizer.pkl")
+    if os.path.exists(tfidf_path):
+        tfidf_size = os.path.getsize(tfidf_path) / (1024 * 1024)
+        print(f"{'TF-IDF Vectorizer':<25} {tfidf_size:<15.2f}MB")
+
+
+# =============================================================================
+# BEST MODEL SELECTION
+# =============================================================================
+
+def select_best_model(test_results, y_test):
+    """
+    Select and display best model based on test accuracy
+    """
+    best_model_name = max(test_results.keys(), key=lambda k: test_results[k]["accuracy"])
+    best_accuracy = test_results[best_model_name]["accuracy"]
+    best_f1 = test_results[best_model_name]["f1"]
+    
+    print("\n" + "="*60)
+    print("BEST MODEL")
+    print("="*60)
+    print(f"Model: {best_model_name}")
+    print(f"Accuracy: {best_accuracy:.4f}")
+    print(f"F1-Score: {best_f1:.4f}")
+    
+    print("\n" + "-"*60)
+    print("DETAILED CLASSIFICATION REPORT:")
+    print("-"*60)
+    print(classification_report(
+        y_test, 
+        test_results[best_model_name]["y_pred"],
+        target_names=["Real (0)", "Fake (1)"],
+        digits=4
+    ))
+    
+    print("CONFUSION MATRIX:")
+    print(confusion_matrix(y_test, test_results[best_model_name]["y_pred"]))
+    
+    return best_model_name
+
+
+# =============================================================================
+# MODEL SAVING
+# =============================================================================
+
+def save_models(models, tfidf):
+    """Save trained models and vectorizer"""
+    print("\n" + "="*60)
+    print("SAVING MODELS")
+    print("="*60)
+    
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    models_dir = os.path.join(base_dir, "models", "baseline")
+    os.makedirs(models_dir, exist_ok=True)
+    
     # Save vectorizer
     tfidf_path = os.path.join(models_dir, "tfidf_vectorizer.pkl")
     joblib.dump(tfidf, tfidf_path)
-    print(f"✅ TF-IDF: {tfidf_path}")
-
+    print(f"✅ TF-IDF Vectorizer: {tfidf_path}")
+    
     # Save models
     for name, model in models.items():
         model_path = os.path.join(models_dir, f"{name}.pkl")
         joblib.dump(model, model_path)
         print(f"✅ {name}: {model_path}")
 
-    print(f"\n{'='*60}")
-    print("TRAINING COMPLETED!")
-    print(f"{'='*60}")
 
+# =============================================================================
+# MAIN PIPELINE
+# =============================================================================
 
-# PREDICT FUNCTION
-
-def predict_baseline(text):
-    """
-    Predict với baseline model
+def main():
+    """Main training pipeline"""
+    print("="*60)
+    print("BASELINE MODELS TRAINING PIPELINE")
+    print("="*60)
     
-    Args:
-        text: Text ĐÃ CLEANED (sử dụng preprocessor trước khi gọi hàm này)
+    # 1. Load data
+    print("\n[1/7] Loading data...")
+    train_df, val_df, test_df = load_data()
+    train_df, val_df, test_df = preprocess_data(train_df, val_df, test_df)
     
-    Returns:
-        label, confidence, proba
-    """
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    models_dir = os.path.join(base_dir, "models", "baseline")
+    print(f"   Train: {len(train_df)} samples")
+    print(f"   Val:   {len(val_df)} samples")
+    print(f"   Test:  {len(test_df)} samples")
+    
+    # 2. Vectorization
+    print("\n[2/7] TF-IDF Vectorization...")
+    tfidf = TfidfVectorizer(
+        max_features=10000,
+        ngram_range=(1, 2),
+        min_df=2,
+        max_df=0.9
+    )
+    
+    X_train_tfidf = tfidf.fit_transform(train_df["text"])
+    X_val_tfidf = tfidf.transform(val_df["text"])
+    X_test_tfidf = tfidf.transform(test_df["text"])
+    
+    print(f"   Vocabulary size: {len(tfidf.vocabulary_)}")
+    print(f"   Train matrix shape: {X_train_tfidf.shape}")
+    print(f"   Val matrix shape:   {X_val_tfidf.shape}")
+    print(f"   Test matrix shape:  {X_test_tfidf.shape}")
+    
+    # 3. Training
+    print("\n[3/7] Training models...")
+    models, train_times = train_models(X_train_tfidf, train_df["label"])
+    
+    # 4. Validation
+    print("\n[4/7] Validation evaluation...")
+    val_results = evaluate_on_validation(models, X_val_tfidf, val_df["label"])
+    
+    # 5. Final test
+    print("\n[5/7] Final test evaluation...")
+    test_results = evaluate_on_test(models, X_test_tfidf, test_df["label"])
+    
+    # 6. Comparison
+    print("\n[6/7] Comparing models...")
+    compare_models(models, train_times, val_results, test_results)
+    
+    # 7. Best model
+    print("\n[7/7] Selecting best model...")
+    best_model = select_best_model(test_results, test_df["label"])
+    
+    # Save models
+    save_models(models, tfidf)
+    
+    print("\n" + "="*60)
+    print("✅ TRAINING PIPELINE COMPLETED!")
+    print("="*60)
+    print(f"\nBest Model: {best_model}")
+    print(f"Accuracy: {test_results[best_model]['accuracy']:.4f}")
+    print(f"F1-Score: {test_results[best_model]['f1']:.4f}")
 
-    model_path = os.path.join(models_dir, "logistic_regression.pkl")
-    tfidf_path = os.path.join(models_dir, "tfidf_vectorizer.pkl")
 
-    # Load model
-    model = joblib.load(model_path)
-    tfidf = joblib.load(tfidf_path)
-
-    # Vectorize
-    text_vec = tfidf.transform([text])
-
-    # Predict
-    pred = model.predict(text_vec)[0]
-    prob = model.predict_proba(text_vec)[0]
-    confidence = prob[pred]
-
-    label = "FAKE" if pred == 1 else "REAL"
-
-    return label, confidence, prob
-
+# =============================================================================
+# ENTRY POINT
+# =============================================================================
 
 if __name__ == "__main__":
-    print("="*60)
-    print("BASELINE MODELS TRAINING")
-    print("="*60)
-    train()
-
-    # Interactive testing
-    print("\n" + "="*60)
-    print("INTERACTIVE TESTING")
-    print("="*60)
-    print("NOTE: Nhập text ĐÃ CLEANED (lowercase, no special chars)")
-    print("      Hoặc sử dụng utils/preprocessor.py để clean trước")
-    print("="*60)
-
-    while True:
-        user_input = input("\nNhập tin tức (gõ 'exit' để thoát): ")
-
-        if user_input.lower() == "exit":
-            print("Thoát chương trình")
-            break
-
-        label, confidence, prob = predict_baseline(user_input)
-
-        print("\nKẾT QUẢ:")
-        print(f"Dự đoán: {label}")
-        print(f"Độ tin cậy: {confidence * 100:.2f}%")
-        print(f"  FAKE: {prob[1] * 100:.2f}%")
-        print(f"  REAL: {prob[0] * 100:.2f}%")
+    main()

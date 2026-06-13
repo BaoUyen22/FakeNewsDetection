@@ -6,12 +6,48 @@ PREPROCESSOR - Module xử lý text preprocessing
 
 CHỨC NĂNG:
 - Clean text trước khi predict
-- Validate input
+- Validate input 
 - Format text
-
-NGƯỜI PHỤ TRÁCH: M4
-=============================================================================
 """
+
+import re
+
+
+def clean_text(text):
+    """
+    Clean text using the same method as data_loader.py
+    
+    Args:
+        text: Raw text string
+    
+    Returns:
+        Cleaned text string
+    """
+    if not text or not isinstance(text, str):
+        return ""
+    
+    # Lowercase
+    text = text.lower()
+    
+    # Remove URLs
+    text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
+    
+    # Remove Reuters tags (same as data_loader)
+    text = re.sub(r"^.*?\(reuters\)\s*[-–]\s*", "", text, flags=re.IGNORECASE)
+    
+    # Remove email addresses
+    text = re.sub(r'\S+@\S+', '', text)
+    
+    # Remove special characters (keep letters, numbers, and spaces)
+    text = re.sub(r'[^a-z0-9\s]', ' ', text)  # ← Thêm 0-9 để giữ số
+    
+    # Remove multiple spaces
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Strip leading/trailing whitespace
+    text = text.strip()
+    
+    return text
 
 
 class TextPreprocessor:
