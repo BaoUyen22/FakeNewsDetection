@@ -17,9 +17,16 @@ import torch
 import joblib
 import pandas as pd
 import numpy as np
-import psutil
 from pathlib import Path
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+
+# Try to import psutil, but continue if not available
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    print("Warning: psutil not available. Memory info will be skipped.")
 
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -57,10 +64,20 @@ def evaluate_baseline(test_df):
     results = {}
     
     try:
+        # Check if test data is valid
+        if len(test_df) == 0:
+            print("[ERROR] Error: Test dataframe is empty!")
+            return results
+        
+        print(f"Test samples: {len(test_df)}")
+        print(f"Test labels distribution: {test_df['label'].value_counts().to_dict()}")
+        
         # Load vectorizer
         vectorizer = joblib.load(models_dir / "tfidf_vectorizer.pkl")
         X_test = vectorizer.transform(test_df["text"])
         y_test = test_df["label"].values
+        
+        print(f"Features shape: {X_test.shape}")
         
         # Models (use exact filenames)
         models = {
@@ -75,13 +92,18 @@ def evaluate_baseline(test_df):
             start_time = time.time()
             y_pred = model.predict(X_test)
             total_time = time.time() - start_time
+            
+            # Prevent division by zero
+            if total_time == 0:
+                total_time = 0.0001  # Set minimum time
+            
             inference_time = total_time / len(y_test) * 1000  # ms per sample
             throughput = len(y_test) / total_time  # samples per second
             
             # Metrics
             accuracy = accuracy_score(y_test, y_pred)
             precision, recall, f1, _ = precision_recall_fscore_support(
-                y_test, y_pred, average='binary'
+                y_test, y_pred, average='binary', zero_division=0
             )
             
             # Model size (map to actual filenames)
@@ -114,7 +136,9 @@ def evaluate_baseline(test_df):
         print(f"\n   TF-IDF Vectorizer: {tfidf_size:.2f}MB")
         
     except Exception as e:
-        print(f"❌ Error evaluating baseline: {e}")
+        import traceback
+        print(f"[ERROR] Error evaluating baseline: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
     
     return results
 
@@ -135,6 +159,11 @@ def evaluate_deep_learning(test_df):
     results = {}
     
     try:
+        # Check if test data is valid
+        if len(test_df) == 0:
+            print("[ERROR] Error: Test dataframe is empty!")
+            return results
+        
         # Import model class
         sys.path.append(str(base_dir / "src"))
         from train_deep_learning import LSTMClassifier, texts_to_sequences
@@ -167,13 +196,18 @@ def evaluate_deep_learning(test_df):
             outputs = torch.sigmoid(model(X_test_tensor))
             y_pred = (outputs >= 0.5).cpu().numpy()
         total_time = time.time() - start_time
+        
+        # Prevent division by zero
+        if total_time == 0:
+            total_time = 0.0001
+        
         inference_time = total_time / len(y_test) * 1000  # ms per sample
         throughput = len(y_test) / total_time  # samples per second
         
         # Metrics
         accuracy = accuracy_score(y_test, y_pred)
         precision, recall, f1, _ = precision_recall_fscore_support(
-            y_test, y_pred, average='binary'
+            y_test, y_pred, average='binary', zero_division=0
         )
         
         # Model size
@@ -198,7 +232,9 @@ def evaluate_deep_learning(test_df):
         print(f"   Device: {device}")
         
     except Exception as e:
-        print(f"❌ Error evaluating Deep Learning: {e}")
+        import traceback
+        print(f"[ERROR] Error evaluating Deep Learning: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
     
     return results
 
@@ -219,6 +255,11 @@ def evaluate_bert(test_df, batch_size=32):
     results = {}
     
     try:
+        # Check if test data is valid
+        if len(test_df) == 0:
+            print("[ERROR] Error: Test dataframe is empty!")
+            return results
+        
         from transformers import AutoTokenizer, AutoModelForSequenceClassification
         
         # Load model
@@ -243,7 +284,8 @@ def evaluate_bert(test_df, batch_size=32):
                 truncation=True,
                 padding=True,
                 max_length=512,
-                return_tensors="pt"
+                return_tensors="pt",
+                return_token_type_ids=False  # DistilBERT doesn't use token_type_ids
             ).to(device)
             
             with torch.no_grad():
@@ -252,6 +294,11 @@ def evaluate_bert(test_df, batch_size=32):
                 y_pred.extend(preds)
         
         total_time = time.time() - start_time
+        
+        # Prevent division by zero
+        if total_time == 0:
+            total_time = 0.0001
+        
         inference_time = total_time / len(y_test) * 1000  # ms per sample
         throughput = len(y_test) / total_time  # samples per second
         
@@ -260,7 +307,7 @@ def evaluate_bert(test_df, batch_size=32):
         # Metrics
         accuracy = accuracy_score(y_test, y_pred)
         precision, recall, f1, _ = precision_recall_fscore_support(
-            y_test, y_pred, average='binary'
+            y_test, y_pred, average='binary', zero_division=0
         )
         
         # Model size
@@ -289,7 +336,9 @@ def evaluate_bert(test_df, batch_size=32):
         print(f"   Device: {device}")
         
     except Exception as e:
-        print(f"❌ Error evaluating BERT: {e}")
+        import traceback
+        print(f"[ERROR] Error evaluating BERT: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
     
     return results
 
@@ -305,12 +354,12 @@ def display_comparison_table(all_results):
     print("="*80)
     
     if not all_results:
-        print("❌ No results to display!")
+        print("[ERROR] No results to display!")
         return
     
     # Performance Metrics
     print("\n┌" + "─"*78 + "┐")
-    print("│ 📊 PERFORMANCE METRICS" + " "*54 + "│")
+    print("│ [METRICS] PERFORMANCE METRICS" + " "*54 + "│")
     print("├" + "─"*78 + "┤")
     print(f"│ {'Model':<20} │ {'Accuracy':<12} │ {'Precision':<12} │ {'Recall':<12} │ {'F1-Score':<12} │")
     print("├" + "─"*78 + "┤")
@@ -326,7 +375,7 @@ def display_comparison_table(all_results):
     
     # Efficiency Metrics
     print("\n┌" + "─"*78 + "┐")
-    print("│ ⚡ EFFICIENCY METRICS" + " "*56 + "│")
+    print("│ [SPEED] EFFICIENCY METRICS" + " "*56 + "│")
     print("├" + "─"*78 + "┤")
     print(f"│ {'Model':<20} │ {'Inference (ms)':<20} │ {'Throughput (samples/s)':<30} │")
     print("├" + "─"*78 + "┤")
@@ -340,25 +389,33 @@ def display_comparison_table(all_results):
     
     # Resource Metrics
     print("\n┌" + "─"*78 + "┐")
-    print("│ 💻 RESOURCE REQUIREMENTS" + " "*52 + "│")
+    print("│ [RESOURCES] RESOURCE REQUIREMENTS" + " "*52 + "│")
     print("├" + "─"*78 + "┤")
     print(f"│ {'Model':<20} │ {'Device':<15} │ {'Model Size (MB)':<20} │ {'Memory':<15} │")
     print("├" + "─"*78 + "┤")
     
-    process = psutil.Process()
-    memory_mb = process.memory_info().rss / (1024 * 1024)
+    # Get memory info if psutil available
+    if PSUTIL_AVAILABLE:
+        try:
+            process = psutil.Process()
+            memory_mb = process.memory_info().rss / (1024 * 1024)
+        except:
+            memory_mb = 0
+    else:
+        memory_mb = 0
     
     for model_name, metrics in all_results.items():
+        memory_str = f"~{int(memory_mb)} MB" if memory_mb > 0 else "N/A"
         print(f"│ {model_name:<20} │ "
               f"{metrics['device']:<15} │ "
               f"{metrics['model_size']:>19.2f} │ "
-              f"{'~' + str(int(memory_mb)) + ' MB':<15} │")
+              f"{memory_str:<15} │")
     
     print("└" + "─"*78 + "┘")
     
     # Operations Metrics
     print("\n┌" + "─"*78 + "┐")
-    print("│ 🔧 OPERATIONAL CHARACTERISTICS" + " "*46 + "│")
+    print("│ [OPS] OPERATIONAL CHARACTERISTICS" + " "*46 + "│")
     print("├" + "─"*78 + "┤")
     print(f"│ {'Model':<20} │ {'Interpretability':<25} │ {'Ease of Deploy':<25} │")
     print("├" + "─"*78 + "┤")
@@ -380,7 +437,7 @@ def display_comparison_table(all_results):
     
     # Summary
     print("\n" + "="*80)
-    print("📈 SUMMARY")
+    print("[SUMMARY] SUMMARY")
     print("="*80)
     
     best_accuracy = max(all_results.items(), key=lambda x: x[1]["accuracy"])
@@ -388,14 +445,14 @@ def display_comparison_table(all_results):
     fastest = min(all_results.items(), key=lambda x: x[1]["inference_time"])
     smallest = min(all_results.items(), key=lambda x: x[1]["model_size"])
     
-    print(f"   🏆 Best Accuracy:     {best_accuracy[0]:<20} ({best_accuracy[1]['accuracy']:.4f})")
-    print(f"   🏆 Best F1-Score:     {best_f1[0]:<20} ({best_f1[1]['f1']:.4f})")
-    print(f"   ⚡ Fastest Inference:  {fastest[0]:<20} ({fastest[1]['inference_time']:.3f}ms)")
-    print(f"   💾 Smallest Model:    {smallest[0]:<20} ({smallest[1]['model_size']:.2f}MB)")
+    print(f"   [BEST] Best Accuracy:     {best_accuracy[0]:<20} ({best_accuracy[1]['accuracy']:.4f})")
+    print(f"   [BEST] Best F1-Score:     {best_f1[0]:<20} ({best_f1[1]['f1']:.4f})")
+    print(f"   [SPEED] Fastest Inference:  {fastest[0]:<20} ({fastest[1]['inference_time']:.3f}ms)")
+    print(f"   [SIZE] Smallest Model:    {smallest[0]:<20} ({smallest[1]['model_size']:.2f}MB)")
     
     # Interpretability explanation
     print("\n" + "="*80)
-    print("📖 INTERPRETABILITY GUIDE")
+    print("[INFO] INTERPRETABILITY GUIDE")
     print("="*80)
     print("   HIGH:     Can inspect feature weights and understand decision logic")
     print("             Example: Logistic Regression shows which words contribute to prediction")
@@ -439,9 +496,10 @@ def main():
     display_comparison_table(all_results)
     
     print("\n" + "="*80)
-    print("✅ BENCHMARKING COMPLETED!")
+    print("[OK] BENCHMARKING COMPLETED!")
     print("="*80)
 
 
 if __name__ == "__main__":
     main()
+

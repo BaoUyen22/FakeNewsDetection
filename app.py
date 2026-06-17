@@ -3,17 +3,26 @@ import time
 from datetime import datetime
 import streamlit as st
 import streamlit.components.v1 as components
+import sys
+from pathlib import Path
+
+# Add project root and test dir to path
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / "test"))
+
+# Import predictors from compare_all_models
+from compare_all_models import (
+    BaselinePredictor,
+    DeepLearningPredictor,
+    BERTPredictor
+)
+from utils.preprocessor import clean_text, detect_vietnamese, get_vietnamese_ratio
 
 TAB_OPTIONS = ["Phân tích thủ công", "Quét tự động"]
-MODEL_OPTIONS = ["BaseLine", "TransFormer"]
+MODEL_OPTIONS = ["Linear SVC", "Logistic Regression", "LSTM", "BERT"]
 
-# ======================================================================
-# HEADER COMMENT:
-# Chức năng "so sánh 4 mô hình" đang được tắt theo yêu cầu
-# Để bật lại: đổi ENABLE_MODEL_COMPARISON = True và dùng lại block render
-# trong render_result_card + phần summarize trong render_manual_analysis.
-# ======================================================================
-ENABLE_MODEL_COMPARISON = False
+ENABLE_MODEL_COMPARISON = False  # true để bậc 
 
 PLATFORM_OPTIONS = [
     ("x", "X / Twitter", "X"),
@@ -619,7 +628,7 @@ def inject_styles():
 def init_session():
     defaults = {
         "active_tab": TAB_OPTIONS[0],
-        "selected_model": MODEL_OPTIONS[0],
+        "selected_model": MODEL_OPTIONS[0],  # Default to Linear SVC
         "manual_text": "",
         "manual_result": None,
         "scan_running": False,
@@ -663,7 +672,112 @@ def verdict_from_score(fake_score: float) -> tuple[str, float]:
     return "Chưa rõ", 0.50 + abs(fake_score - 0.50)
 
 
+# =============================================================================
+# LOAD REAL MODELS (CACHED)
+# =============================================================================
+
+@st.cache_resource
+def load_all_predictors():
+    """Load all model predictors once and cache them"""
+    try:
+        baseline = BaselinePredictor(fake_threshold=0.60)  
+        deep_learning = DeepLearningPredictor()
+        bert = BERTPredictor()
+        return baseline, deep_learning, bert
+    except Exception as e:
+        st.error(f"❌ Error loading models: {e}")
+        return None, None, None
+
+
+# Map display names to predictor methods
+MODEL_NAME_MAPPING = {
+    "Linear SVC": ("baseline", "LinearSVC"),
+    "Logistic Regression": ("baseline", "Logistic Regression"),
+    "LSTM": ("deep_learning", "LSTM"),
+    "BERT": ("bert", "BERT (DistilBERT)")
+}
+
+
+def real_model_prediction(text: str, model_name: str) -> dict:
+    """
+    Real prediction using trained models from compare_all_models
+    
+    Args:
+        text: Raw text to predict
+        model_name: Display name (e.g. "Linear SVC")
+    
+    Returns:
+        dict with model, verdict, confidence, elapsed
+    """
+    # Get cached predictors (only loads once due to @st.cache_resource)
+    baseline, deep_learning, bert = load_all_predictors()
+    
+    if not any([baseline, deep_learning, bert]):
+        # Fallback to simulation if models not loaded
+        return simulate_model_prediction(text, model_name)
+    
+    try:
+        # Clean text first
+        cleaned_text = clean_text(text)
+        
+        if not cleaned_text or len(cleaned_text.strip()) < 10:
+            st.warning("⚠️ Text quá ngắn sau khi làm sạch. Vui lòng nhập thêm nội dung.")
+            return None
+        
+        # Get predictor type and key
+        predictor_type, predictor_key = MODEL_NAME_MAPPING.get(model_name, ("baseline", "LinearSVC"))
+        
+        # Get predictions
+        start_time = time.perf_counter()
+        
+        if predictor_type == "baseline" and baseline.models:
+            # Use cached baseline predictor (already has threshold 0.70)
+            results = baseline.predict(cleaned_text)
+            result = results.get(predictor_key, {})
+        elif predictor_type == "deep_learning" and deep_learning.model:
+            results = deep_learning.predict(cleaned_text)
+            result = results.get(predictor_key, {})
+        elif predictor_type == "bert" and bert.model:
+            results = bert.predict(cleaned_text)
+            result = results.get(predictor_key, {})
+        else:
+            st.warning(f"⚠️ Model {model_name} not available. Using simulation.")
+            return simulate_model_prediction(text, model_name)
+        
+        elapsed = time.perf_counter() - start_time
+        
+        if not result:
+            st.warning(f"⚠️ No result from {model_name}. Using simulation.")
+            return simulate_model_prediction(text, model_name)
+        
+        # Map verdict from English to Vietnamese
+        verdict_map = {
+            "FAKE": "Tin giả",
+            "REAL": "Tin thật"
+        }
+        verdict = verdict_map.get(result["label"], "Chưa rõ")
+        
+        # Add confidence warning for low confidence predictions
+        confidence = result["confidence"]
+        if confidence < 0.60:
+            # Low confidence - mark as uncertain
+            verdict = "Chưa rõ"
+            confidence = 0.50 + abs(confidence - 0.50) * 0.5  # Dampen confidence
+        
+        return {
+            "model": model_name,
+            "verdict": verdict,
+            "confidence": confidence,
+            "elapsed": elapsed,
+            "fake_prob": result["fake_prob"],
+            "real_prob": result["real_prob"],
+        }
+        
+    except Exception as e:
+        st.warning(f"⚠️ Model prediction failed: {e}. Using simulation.")
+        return simulate_model_prediction(text, model_name)
 def simulate_model_prediction(text: str, model_name: str) -> dict:
+    """Fallback simulation if real models fail"""
     lower_text = text.lower()
     fake_tokens = ["giật gân", "bí mật", "chấn động", "fake", "giả", "100%"]
     real_tokens = ["theo báo cáo", "nguồn chính thức", "xác minh", "dữ liệu", "nghiên cứu"]
@@ -676,26 +790,47 @@ def simulate_model_prediction(text: str, model_name: str) -> dict:
         if token in lower_text:
             score -= 0.04
 
+    # Different model characteristics
     model_bias = {
-        "BaseLine": 0.03,
-        "TransFormer": 0.06,
-      
+        "Linear SVC": 0.02,
+        "Logistic Regression": 0.03,
+        "LSTM": 0.05,
+        "BERT": 0.06,
     }[model_name]
     score += model_bias
     score += (stable_noise(text, model_name) - 0.5) * 0.26
     score = clamp(score, 0.06, 0.94)
 
     verdict, confidence = verdict_from_score(score)
-    if model_name == "BaseLine":
-        elapsed = 1.1 + stable_noise(text, "latency") * 0.6
+    
+    # Different processing times for different models
+    if model_name == "Linear SVC":
+        elapsed = 0.8 + stable_noise(text, "latency") * 0.4
+    elif model_name == "Logistic Regression":
+        elapsed = 1.0 + stable_noise(text, "latency") * 0.5
+    elif model_name == "LSTM":
+        elapsed = 2.5 + stable_noise(text, "latency-lstm") * 0.8
+    else:  # BERT
+        elapsed = 3.2 + stable_noise(text, f"latency-{model_name}") * 1.0
+
+    # Calculate fake/real probs
+    if verdict == "Tin giả":
+        fake_prob = confidence
+        real_prob = 1 - confidence
+    elif verdict == "Tin thật":
+        real_prob = confidence
+        fake_prob = 1 - confidence
     else:
-        elapsed = 0.03 + stable_noise(text, f"latency-{model_name}") * 0.07
+        fake_prob = 0.5
+        real_prob = 0.5
 
     return {
         "model": model_name,
         "verdict": verdict,
         "confidence": confidence,
         "elapsed": elapsed,
+        "fake_prob": fake_prob,
+        "real_prob": real_prob,
     }
 
 
@@ -768,44 +903,46 @@ def render_sidebar():
         """,
         unsafe_allow_html=True,
     )
+    
+    # Show model status
+    baseline, deep_learning, bert = load_all_predictors()
+    
+    if baseline and baseline.models:
+        st.sidebar.markdown(
+            '<div style="font-size:10px;color:#059669;margin-bottom:0.8rem;">🟢 Models ready</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        st.sidebar.markdown(
+            '<div style="font-size:10px;color:#DC2626;margin-bottom:0.8rem;">🔴 Models not loaded</div>',
+            unsafe_allow_html=True
+        )
 
     st.sidebar.markdown('<div class="section-label">Mô hình</div>', unsafe_allow_html=True)
     st.sidebar.radio(
         "Model",
         MODEL_OPTIONS,
         key="selected_model",
-        format_func=lambda name: "DistilBERT ★" if name == "DistilBERT" else name,
+        format_func=lambda name: f"{name} {'⭐' if name == 'BERT' else ''}",
         label_visibility="collapsed",
     )
 
     st.sidebar.markdown('<div class="section-label">Nền tảng quét</div>', unsafe_allow_html=True)
     for key, label, _ in PLATFORM_OPTIONS:
-        st.session_state["platforms"][key] = st.sidebar.checkbox(
+        # Use the checkbox value directly with a unique key
+        current_value = st.sidebar.checkbox(
             label,
-            value=st.session_state["platforms"][key],
-            key=f"sidebar_platform_{key}",
+            value=st.session_state["platforms"].get(key, False),
+            key=f"platform_{key}",
         )
-
-    # stats = st.session_state["stats"]
-    # st.sidebar.markdown('<div class="section-label">Phiên này</div>', unsafe_allow_html=True)
-    # st.sidebar.markdown(
-    #     f"""
-    #     <div class="soft-panel">
-    #       <div class="sidebar-row"><span class="name">Tổng quét</span><span class="value">{stats['total']}</span></div>
-    #       <div class="sidebar-row"><span class="name">Tin giả</span><span class="value" style="color:#A32D2D;">{stats['fake']}</span></div>
-    #       <div class="sidebar-row"><span class="name">Tin thật</span><span class="value" style="color:#0F6E56;">{stats['real']}</span></div>
-    #       <div class="sidebar-row"><span class="name">Chưa rõ</span><span class="value" style="color:#854F0B;">{stats['unclear']}</span></div>
-    #     </div>
-    #     """,
-    #     unsafe_allow_html=True,
-    # )
-
+        # Update the platforms dictionary
+        st.session_state["platforms"][key] = current_value
 
 def build_compare_table(predictions: list[dict]) -> str:
     rows = []
     for item in predictions:
         theme = VERDICT_THEME[item["verdict"]]
-        star = "★ " if item["model"] == "DistilBERT" else ""
+        star = "⭐ " if item["model"] == "BERT" else ""
         confidence_pct = int(item["confidence"] * 100)
         latency = f"{item['elapsed']:.1f}s" if item["elapsed"] >= 0.1 else "<0.1s"
         rows.append(
@@ -832,6 +969,25 @@ def render_result_card(result: dict):
     theme = VERDICT_THEME[primary["verdict"]]
     confidence_pct = int(primary["confidence"] * 100)
     chip_icon = "⚠" if primary["verdict"] == "Tin giả" else ("✓" if primary["verdict"] == "Tin thật" else "•")
+    
+    # Get probabilities if available
+    fake_pct = int(primary.get("fake_prob", 0) * 100) if "fake_prob" in primary else confidence_pct if primary["verdict"] == "Tin giả" else (100 - confidence_pct)
+    real_pct = int(primary.get("real_prob", 0) * 100) if "real_prob" in primary else (100 - fake_pct)
+    
+    # Confidence warning
+    confidence_warning = ""
+    if confidence_pct < 70:
+        confidence_warning = """
+        <div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:0.5rem 0.6rem;margin-top:0.6rem;font-size:11px;color:#92400E;">
+            ⚠️ <strong>Độ tin cậy thấp</strong> - Kết quả có thể không chính xác. Model chưa chắc chắn về văn bản này. Nên kiểm chứng thêm từ nguồn khác.
+        </div>
+        """
+    elif primary["verdict"] == "Chưa rõ":
+        confidence_warning = """
+        <div style="background:#F3F4F6;border:1px solid #9CA3AF;border-radius:8px;padding:0.5rem 0.6rem;margin-top:0.6rem;font-size:11px;color:#374151;">
+            ℹ️ <strong>Không thể kết luận</strong> - Văn bản này có đặc điểm không rõ ràng hoặc nằm ngoài phạm vi training data. Model không đủ tự tin để phân loại.
+        </div>
+        """
 
     st.markdown(
         f"""
@@ -846,7 +1002,12 @@ def render_result_card(result: dict):
           <div class="progress-track">
             <div class="progress-fill" style="width:{confidence_pct}%;background:{theme['bar']};"></div>
           </div>
-          <div class="meta-line">Mô hình chọn: {st.session_state['selected_model']} · Xử lý: {result['duration']:.1f}s</div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:#6B7280;margin-bottom:0.5rem;">
+            <span>🚫 Tin giả: <strong style="color:#791F1F;">{fake_pct}%</strong></span>
+            <span>✅ Tin thật: <strong style="color:#085041;">{real_pct}%</strong></span>
+          </div>
+          <div class="meta-line">Mô hình: {st.session_state['selected_model']} · Xử lý: {result['duration']:.2f}s</div>
+          {confidence_warning}
         </div>
         """,
         unsafe_allow_html=True,
@@ -868,8 +1029,10 @@ def render_manual_analysis():
         st.markdown(f'<div class="counter">{char_count} / 5000 ký tự</div>', unsafe_allow_html=True)
     with clear_col:
         if text and st.button("Xóa", key="clear_manual_text", use_container_width=True):
-            st.session_state["manual_text"] = ""
-            st.session_state["manual_result"] = None
+            # Delete from session_state instead of setting to ""
+            del st.session_state["manual_text"]
+            if "manual_result" in st.session_state:
+                del st.session_state["manual_result"]
             st.rerun()
 
     analyze_clicked = st.button(
@@ -882,30 +1045,57 @@ def render_manual_analysis():
 
     if char_count < 50:
         st.caption("Nhập tối thiểu 50 ký tự để bật nút phân tích.")
+    
+    # Check for Vietnamese text
+    if text and detect_vietnamese(text):
+        vietnamese_ratio = get_vietnamese_ratio(text)
+        
+        if vietnamese_ratio > 0.3:  # More than 30% Vietnamese words
+            st.warning(
+                f"**Cảnh báo:** Phát hiện {vietnamese_ratio*100:.0f}% nội dung tiếng Việt!\n\n"
+                "Model chỉ được huấn luyện trên **tiếng Anh**. "
+                "Kết quả phân tích có thể **không chính xác** với văn bản tiếng Việt.\n\n"
+                "**Khuyến nghị:** Dịch sang tiếng Anh trước khi phân tích để có kết quả tốt nhất.",
+                icon="⚠️"
+            )
 
     if analyze_clicked and text.strip():
         with st.spinner("Đang phân tích..."):
             start = time.perf_counter()
             if ENABLE_MODEL_COMPARISON:
-                predictions = [simulate_model_prediction(text, model_name) for model_name in MODEL_OPTIONS]
-                primary = next(
-                    item for item in predictions if item["model"] == st.session_state["selected_model"]
-                )
-                summary = summarize_result(predictions)
-                st.session_state["manual_result"] = {
-                    "primary": primary,
-                    "summary": summary,
-                    "predictions": predictions,
-                    "duration": time.perf_counter() - start,
-                }
-                update_stats(primary["verdict"])
+                # Use real model prediction for comparison
+                predictions = []
+                for model_name in MODEL_OPTIONS:
+                    pred = real_model_prediction(text, model_name)
+                    if pred:  # Only add if prediction successful
+                        predictions.append(pred)
+                
+                if not predictions:
+                    st.error("❌ Không thể phân tích với bất kỳ model nào. Vui lòng thử lại.")
+                else:
+                    primary = next(
+                        (item for item in predictions if item["model"] == st.session_state["selected_model"]),
+                        predictions[0]  # Fallback to first prediction
+                    )
+                    summary = summarize_result(predictions)
+                    st.session_state["manual_result"] = {
+                        "primary": primary,
+                        "summary": summary,
+                        "predictions": predictions,
+                        "duration": time.perf_counter() - start,
+                    }
+                    update_stats(primary["verdict"])
             else:
-                primary = simulate_model_prediction(text, st.session_state["selected_model"])
-                st.session_state["manual_result"] = {
-                    "primary": primary,
-                    "duration": time.perf_counter() - start,
-                }
-                update_stats(primary["verdict"])
+                # Use real model prediction for single model
+                primary = real_model_prediction(text, st.session_state["selected_model"])
+                if primary:
+                    st.session_state["manual_result"] = {
+                        "primary": primary,
+                        "duration": time.perf_counter() - start,
+                    }
+                    update_stats(primary["verdict"])
+                else:
+                    st.error("❌ Không thể phân tích. Vui lòng kiểm tra lại nội dung.")
 
     if st.session_state["manual_result"]:
         render_result_card(st.session_state["manual_result"])
@@ -1051,17 +1241,18 @@ def render_scanner_config():
     platform_cols = st.columns(4)
     for col, (key, label, _) in zip(platform_cols, PLATFORM_OPTIONS):
         with col:
-            is_on = st.session_state["platforms"][key]
+            is_on = st.session_state["platforms"].get(key, False)
             st.markdown(
                 f'<div class="platform-chip {"on" if is_on else ""}">{label}<br>{"✓" if is_on else ""}</div>',
                 unsafe_allow_html=True,
             )
-            st.session_state["platforms"][key] = st.checkbox(
+            current_value = st.checkbox(
                 "Bật",
                 key=f"platform_toggle_{key}",
                 value=is_on,
                 label_visibility="collapsed",
             )
+            st.session_state["platforms"][key] = current_value
 
     st.markdown('<div class="section-label">Chủ đề</div>', unsafe_allow_html=True)
     st.session_state["topics"] = st.multiselect(
@@ -1111,6 +1302,8 @@ def render_auto_scanner():
 
 def main():
     st.set_page_config(page_title="Verify.AI", page_icon="📰", layout="wide")
+    baseline, deep_learning, bert = load_all_predictors()
+    
     init_session()
     inject_styles()
     render_topbar()

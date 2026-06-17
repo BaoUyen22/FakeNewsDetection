@@ -60,8 +60,18 @@ def train_models(X_train_tfidf, y_train):
     print("="*60)
     
     models = {
-        "logistic_regression": LogisticRegression(max_iter=1000, random_state=42),
-        "linear_svc": LinearSVC(max_iter=1000, random_state=42, dual='auto'),
+        "logistic_regression": LogisticRegression(
+            max_iter=1000, 
+            random_state=42,
+            class_weight='balanced',  # Handle class imbalance
+            C=1.0  # Regularization strength
+        ),
+        "linear_svc": LinearSVC(
+            max_iter=1000, 
+            random_state=42, 
+            dual='auto',
+            class_weight='balanced'  # Handle class imbalance
+        ),
     }
     
     trained_models = {}
@@ -316,10 +326,11 @@ def main():
     # 2. Vectorization
     print("\n[2/7] TF-IDF Vectorization...")
     tfidf = TfidfVectorizer(
-        max_features=10000,
-        ngram_range=(1, 2),
-        min_df=2,
-        max_df=0.9
+        max_features=15000,  # Tăng từ 10000
+        ngram_range=(1, 3),  # Thêm trigrams
+        min_df=1,  # Giảm từ 2 (giữ nhiều từ hơn)
+        max_df=0.85,  # Giảm từ 0.9 (loại bỏ từ quá phổ biến)
+        sublinear_tf=True  # Apply sublinear tf scaling
     )
     
     X_train_tfidf = tfidf.fit_transform(train_df["text"])

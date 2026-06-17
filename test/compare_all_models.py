@@ -35,9 +35,15 @@ from utils.preprocessor import clean_text
 class BaselinePredictor:
     """Baseline models: Logistic Regression, LinearSVC"""
     
-    def __init__(self):
+    def __init__(self, fake_threshold=0.70):
+        """
+        Args:
+            fake_threshold: Threshold for classifying as FAKE (default 0.70)
+                           Higher = more conservative, fewer false positives
+        """
         self.models = {}
         self.vectorizer = None
+        self.fake_threshold = fake_threshold
         self.load_models()
     
     def load_models(self):
@@ -70,26 +76,36 @@ class BaselinePredictor:
         for name, model in self.models.items():
             start_time = time.time()
             
-            # Predict
-            pred = model.predict(text_vec)[0]
-            
             # Get probability if available
             if hasattr(model, 'predict_proba'):
                 prob = model.predict_proba(text_vec)[0]
+                real_prob = prob[0]  # Class 0 = REAL
+                fake_prob = prob[1]  # Class 1 = FAKE
+                
+                # Use custom threshold instead of default 0.5
+                pred = 1 if fake_prob >= self.fake_threshold else 0
                 confidence = prob[pred]
-                fake_prob = prob[1]
-                real_prob = prob[0]
             elif hasattr(model, 'decision_function'):
-                # For SVC
+                # For SVC - decision function returns signed distance
                 decision = model.decision_function(text_vec)[0]
-                # Convert to probability-like score
-                fake_prob = 1 / (1 + np.exp(-decision))  # Sigmoid
+                
+                # Convert to probability using Platt scaling (sigmoid)
+                # Positive decision → FAKE (class 1)
+                # Negative decision → REAL (class 0)
+                fake_prob = 1 / (1 + np.exp(-decision))
                 real_prob = 1 - fake_prob
+                
+                # Use custom threshold
+                pred = 1 if fake_prob >= self.fake_threshold else 0
+                
+                # Confidence based on actual prediction
                 confidence = fake_prob if pred == 1 else real_prob
             else:
-                confidence = 1.0
+                # Fallback if no probability available
+                pred = model.predict(text_vec)[0]
                 fake_prob = 1.0 if pred == 1 else 0.0
                 real_prob = 1.0 - fake_prob
+                confidence = 1.0
             
             inference_time = (time.time() - start_time) * 1000  # ms
             

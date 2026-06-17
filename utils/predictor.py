@@ -13,6 +13,7 @@ NGƯỜI PHỤ TRÁCH: M4
 """
 
 import pickle
+import joblib
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -41,16 +42,7 @@ class ModelPredictor:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     def load_baseline_models(self):
-        """
-        Load baseline models (Logistic Regression, LinearSVC, Naive Bayes)
-        
-        Cấu trúc thư mục:
-        models/baseline/
-        ├── logistic_regression.pkl
-        ├── linear_svc.pkl
-        ├── naive_bayes.pkl
-        └── tfidf_vectorizer.pkl
-        """
+ 
         baseline_dir = self.models_dir / "baseline"
         
         if not baseline_dir.exists():
@@ -60,9 +52,13 @@ class ModelPredictor:
         # Load vectorizer
         vectorizer_path = baseline_dir / "tfidf_vectorizer.pkl"
         if vectorizer_path.exists():
-            with open(vectorizer_path, "rb") as f:
-                self.vectorizers["tfidf"] = pickle.load(f)
-            print(f"✅ Loaded TF-IDF vectorizer")
+            try:
+                self.vectorizers["tfidf"] = joblib.load(vectorizer_path)
+                print(f"✅ Loaded TF-IDF vectorizer")
+            except Exception as e:
+                print(f"❌ Error loading TF-IDF vectorizer: {e}")
+                print(f"   Try retraining models with: python src/train_baseline.py")
+                return
         
         # Load models
         model_files = {
@@ -74,9 +70,11 @@ class ModelPredictor:
         for name, filename in model_files.items():
             model_path = baseline_dir / filename
             if model_path.exists():
-                with open(model_path, "rb") as f:
-                    self.baseline_models[name] = pickle.load(f)
-                print(f"✅ Loaded {name}")
+                try:
+                    self.baseline_models[name] = joblib.load(model_path)
+                    print(f"✅ Loaded {name}")
+                except Exception as e:
+                    print(f"❌ Error loading {name}: {e}")
             else:
                 print(f"⚠️  {name} not found at {model_path}")
     
@@ -169,13 +167,14 @@ class ModelPredictor:
         if self.transformer_model is None or self.transformer_tokenizer is None:
             raise ValueError("Transformer model not loaded")
         
-        # Tokenize
+        # Tokenize (remove token_type_ids for DistilBERT)
         inputs = self.transformer_tokenizer(
             text,
             max_length=max_length,
             padding="max_length",
             truncation=True,
-            return_tensors="pt"
+            return_tensors="pt",
+            return_token_type_ids=False  # DistilBERT doesn't use token_type_ids
         )
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         
