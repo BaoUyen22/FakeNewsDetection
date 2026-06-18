@@ -12,12 +12,12 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from compare_all_models import (
+from predictors import (
     BaselinePredictor,
     DeepLearningPredictor,
-    BERTPredictor,
-    display_comparison
+    BERTPredictor
 )
+from predictors.comparison import display_comparison
 from utils.preprocessor import clean_text
 
 
