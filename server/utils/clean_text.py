@@ -79,7 +79,7 @@ class BERTTextCleaner(BaseTextCleaner):
 
 _MODEL_CLEANERS = {
     'logistic': MLTextCleaner,
-    'svm': MLTextCleaner,
+    'linear_svc': MLTextCleaner,
     'ml': MLTextCleaner,
     'lstm': LSTMTextCleaner,
     'bert': BERTTextCleaner,

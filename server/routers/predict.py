@@ -45,10 +45,10 @@ router = APIRouter()
 
 def predict_with_baseline(model_name: str, text: str):
     """
-    Dự đoán với baseline models (Logistic Regression, SVM)
+    Dự đoán với baseline models (Logistic Regression, Linear SVC)
     
     Args:
-        model_name: Model name (logistic, svm)
+        model_name: Model name (logistic, linear_svc)
         text: Raw text to predict (will be preprocessed)
     
     Returns: (label, confidence, fake_prob, real_prob, cleaned_text)
@@ -227,7 +227,7 @@ def predict_with_lstm(model_name: str, text: str):
     summary="Crawl URL và dự đoán tin giả"
 )
 async def predict_from_url(
-    model_name: str = PathParam(..., description="Model name: logistic, svm, bert, lstm"),
+    model_name: str = PathParam(..., description="Model name: logistic, linear_svc, bert, lstm"),
     url: str = PathParam(..., description="URL của bài báo"),
     use_js: bool = Query(False, description="Dùng Playwright để render JavaScript")
 ):
@@ -237,7 +237,7 @@ async def predict_from_url(
     - GET /predict/bert/https://vnexpress.net/...
     - GET /predict/bert/https://cnn.com/...?use_js=true (for JS-heavy sites)
     """
-    valid_models = ["logistic", "svm", "bert", "lstm"]
+    valid_models = ["logistic", "linear_svc", "bert", "lstm"]
     if model_name not in valid_models:
         raise HTTPException(
             status_code=404,
@@ -268,7 +268,7 @@ async def predict_from_url(
             )
         
         # 2. Predict
-        if model_name in ["logistic", "svm"]:
+        if model_name in ["logistic", "linear_svc"]:
             label, confidence, fake_prob, real_prob, cleaned_text = predict_with_baseline(model_name, text)
         elif model_name == "bert":
             label, confidence, fake_prob, real_prob, cleaned_text = predict_with_bert(model_name, text)
@@ -309,12 +309,12 @@ async def predict_from_url(
     summary="Predict news text directly"
 )
 async def predict_from_text(
-    model_name: str = PathParam(..., description="Model name: logistic, svm, bert, lstm"),
+    model_name: str = PathParam(..., description="Model name: logistic, linear_svc, bert, lstm"),
     request: Request = None,
     text: str | None = Form(None),
 ):
     """Predict from raw news text input."""
-    valid_models = ["logistic", "svm", "bert", "lstm"]
+    valid_models = ["logistic", "linear_svc", "bert", "lstm"]
     if model_name not in valid_models:
         raise HTTPException(
             status_code=404,
@@ -340,7 +340,7 @@ async def predict_from_text(
 
     text = str(body_text)
 
-    if model_name in ["logistic", "svm"]:
+    if model_name in ["logistic", "linear_svc"]:
         label, confidence, fake_prob, real_prob, cleaned_text = predict_with_baseline(model_name, text)
     elif model_name == "bert":
         label, confidence, fake_prob, real_prob, cleaned_text = predict_with_bert(model_name, text)
