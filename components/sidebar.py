@@ -27,12 +27,12 @@ def render_sidebar():
     
     if baseline and baseline.models:
         st.sidebar.markdown(
-            '<div style="font-size:10px;color:#059669;margin-bottom:0.8rem;">🟢 Models ready</div>',
+            '<div style="font-size:10px;color:#059669;margin-bottom:0.8rem;">Models ready</div>',
             unsafe_allow_html=True
         )
     else:
         st.sidebar.markdown(
-            '<div style="font-size:10px;color:#DC2626;margin-bottom:0.8rem;">🔴 Models not loaded</div>',
+            '<div style="font-size:10px;color:#DC2626;margin-bottom:0.8rem;">Models not loaded</div>',
             unsafe_allow_html=True
         )
 
@@ -41,7 +41,7 @@ def render_sidebar():
         "Model",
         MODEL_OPTIONS,
         key="selected_model",
-        format_func=lambda name: f"{name} {'⭐' if name == 'BERT' else ''}",
+        format_func=lambda name: f"{name} {'' if name == 'BERT' else ''}",
         label_visibility="collapsed",
     )
 

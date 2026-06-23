@@ -3,46 +3,102 @@ Text cleaning utilities - Xử lý làm sạch text trước khi đưa vào mode
 """
 import re
 import string
+from typing import Type
 
 
-def clean_text(text: str) -> str:
-    """
-    Làm sạch text cho model prediction
-    
-    Args:
-        text: Raw text input
-        
-    Returns:
-        Cleaned text
-    """
-    if not text:
-        return ""
-    
-    # Lowercase
-    text = text.lower()
-    
-    # Remove URLs
-    text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
-    
-    # Remove email addresses
-    text = re.sub(r'\S+@\S+', '', text)
-    
-    # Remove mentions and hashtags (Twitter-style)
-    text = re.sub(r'@\w+|#\w+', '', text)
-    
-    # Remove HTML tags
-    text = re.sub(r'<.*?>', '', text)
-    
-    # Remove numbers (optional - comment out if needed)
-    # text = re.sub(r'\d+', '', text)
-    
-    # Remove extra whitespace
-    text = re.sub(r'\s+', ' ', text)
-    
-    # Remove leading/trailing whitespace
-    text = text.strip()
-    
-    return text
+class BaseTextCleaner:
+    """Common cleaning steps used by all model-specific cleaners."""
+
+    @staticmethod
+    def normalize_whitespace(text: str) -> str:
+        return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
+    def remove_urls(text: str) -> str:
+        return re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
+
+    @staticmethod
+    def remove_emails(text: str) -> str:
+        return re.sub(r'\S+@\S+', '', text)
+
+    @staticmethod
+    def remove_mentions_hashtags(text: str) -> str:
+        return re.sub(r'@[\w_]+|#[\w_]+', '', text)
+
+    @staticmethod
+    def remove_html(text: str) -> str:
+        return re.sub(r'<.*?>', '', text)
+
+    @staticmethod
+    def remove_special_chars(text: str, keep: str = '') -> str:
+        pattern = rf'[^{re.escape(string.ascii_letters + string.digits + keep)}\s]'
+        return re.sub(pattern, ' ', text)
+
+    @classmethod
+    def clean_common(cls, text: str) -> str:
+        if not text:
+            return ""
+        text = cls.remove_urls(text)
+        text = cls.remove_emails(text)
+        text = cls.remove_mentions_hashtags(text)
+        text = cls.remove_html(text)
+        text = cls.remove_special_chars(text, keep='!?')
+        return cls.normalize_whitespace(text)
+
+
+class MLTextCleaner(BaseTextCleaner):
+    """Cleaner for traditional ML models."""
+
+    @classmethod
+    def transform(cls, text: str) -> str:
+        cleaned = cls.clean_common(text)
+        cleaned = cleaned.lower()
+        cleaned = cls.remove_special_chars(cleaned, keep='')
+        return cls.normalize_whitespace(cleaned)
+
+
+class LSTMTextCleaner(BaseTextCleaner):
+    """Cleaner for LSTM models."""
+
+    @classmethod
+    def transform(cls, text: str) -> str:
+        cleaned = cls.clean_common(text)
+        cleaned = cleaned.lower()
+        cleaned = cls.remove_special_chars(cleaned, keep='!?')
+        return cls.normalize_whitespace(cleaned)
+
+
+class BERTTextCleaner(BaseTextCleaner):
+    """Cleaner for BERT models."""
+
+    @classmethod
+    def transform(cls, text: str) -> str:
+        cleaned = cls.clean_common(text)
+        return cls.normalize_whitespace(cleaned)
+
+
+_MODEL_CLEANERS = {
+    'logistic': MLTextCleaner,
+    'linear_svc': MLTextCleaner,
+    'ml': MLTextCleaner,
+    'lstm': LSTMTextCleaner,
+    'bert': BERTTextCleaner,
+}
+
+
+def get_text_cleaner(model_name: str):
+    if not model_name:
+        raise ValueError('Model name is required for text cleaning')
+    cleaner = _MODEL_CLEANERS.get(model_name.lower())
+    if cleaner is None:
+        raise ValueError(f"Unsupported model '{model_name}'. Supported: {list(_MODEL_CLEANERS.keys())}")
+    return cleaner
+
+
+def clean_text(text: str, model_name: str = 'bert') -> str:
+    """Clean text according to the target model pipeline."""
+    cleaner = get_text_cleaner(model_name)
+    return cleaner.transform(text)
 
 
 def remove_punctuation(text: str) -> str:
@@ -55,15 +111,14 @@ def remove_punctuation(text: str) -> str:
 def remove_stopwords(text: str, stopwords: list = None) -> str:
     """
     Remove stopwords from text
-    
+
     Args:
         text: Input text
         stopwords: List of stopwords to remove
     """
     if stopwords is None:
-        # Basic English stopwords
         stopwords = ['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for']
-    
+
     words = text.split()
     filtered = [word for word in words if word.lower() not in stopwords]
     return ' '.join(filtered)

@@ -51,7 +51,7 @@ class BaselinePredictor:
         Predict with all baseline models
         
         Args:
-            text: Cleaned text to predict
+            text: Raw text to predict (will be preprocessed)
         
         Returns:
             dict: Model name -> prediction results
@@ -61,8 +61,23 @@ class BaselinePredictor:
         if not self.vectorizer or not self.models:
             return results
         
-        # Vectorize text
-        text_vec = self.vectorizer.transform([text])
+        # Apply MLTextPreprocessor to get cleaned text + features
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        
+        from utils.preprocessor_for_model import MLTextPreprocessor
+        from scipy.sparse import hstack
+        
+        text_ml, num_excl, num_quest = MLTextPreprocessor.transform(text)
+        
+        # Vectorize text with TF-IDF
+        text_vec_tfidf = self.vectorizer.transform([text_ml])
+        
+        # Add num_exclamation and num_question features
+        excl_array = np.array([[num_excl]])
+        quest_array = np.array([[num_quest]])
+        text_vec = hstack([text_vec_tfidf, excl_array, quest_array])
         
         # Predict with each model
         for name, model in self.models.items():

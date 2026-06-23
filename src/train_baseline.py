@@ -1,5 +1,6 @@
 # Liner , TF-IDF , Logistic 
 import os
+import sys
 import joblib
 import pandas as pd
 import time
@@ -12,7 +13,12 @@ from sklearn.metrics import (
 )
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import LinearSVC
+import numpy as np
+from scipy.sparse import hstack
 
+# Add parent directory to path để import utils
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from utils.preprocessor_for_model import MLTextPreprocessor
 
 # =============================================================================
 # DATA LOADING
@@ -34,13 +40,21 @@ def load_data():
 
 
 def preprocess_data(train_df, val_df, test_df):
-    """Clean and prepare data"""
-    # Handle NaN and empty strings
+    """Clean and apply ML-specific preprocessing"""
     for df in [train_df, val_df, test_df]:
         df["text"] = df["text"].fillna("").astype(str)
         df.drop(df[df["text"].str.strip().str.len() == 0].index, inplace=True)
         df.reset_index(drop=True, inplace=True)
-    
+
+    for df in [train_df, val_df, test_df]:
+        # Apply MLTextPreprocessor, returns tuple (cleaned_text, num_excl, num_quest)
+        df[["text_ml", "num_exclamation", "num_question"]] = df["text"].apply(
+            lambda x: pd.Series(MLTextPreprocessor.transform(x))
+        )
+        # Remove rows where cleaned text is empty
+        df.drop(df[df["text_ml"].str.strip().str.len() == 0].index, inplace=True)
+        df.reset_index(drop=True, inplace=True)
+
     return train_df, val_df, test_df
 
 
@@ -48,7 +62,7 @@ def preprocess_data(train_df, val_df, test_df):
 # TRAINING
 # =============================================================================
 
-def train_models(X_train_tfidf, y_train):
+def train_models(X_train, y_train):
     """
     Train multiple baseline models
     
@@ -73,7 +87,6 @@ def train_models(X_train_tfidf, y_train):
             class_weight='balanced'  # Handle class imbalance
         ),
     }
-    
     trained_models = {}
     training_times = {}
     
@@ -81,7 +94,7 @@ def train_models(X_train_tfidf, y_train):
         print(f"\n[{i}/{len(models)}] Training {name}...")
         
         start_time = time.time()
-        model.fit(X_train_tfidf, y_train)
+        model.fit(X_train, y_train)
         train_time = time.time() - start_time
         
         trained_models[name] = model
@@ -96,7 +109,7 @@ def train_models(X_train_tfidf, y_train):
 # VALIDATION
 # =============================================================================
 
-def evaluate_on_validation(models, X_val_tfidf, y_val):
+def evaluate_on_validation(models, X_val, y_val):
     """
     Evaluate models on validation set
     
@@ -113,7 +126,7 @@ def evaluate_on_validation(models, X_val_tfidf, y_val):
         print(f"\n{name}:")
         
         # Predict
-        y_pred = model.predict(X_val_tfidf)
+        y_pred = model.predict(X_val)
         
         # Metrics
         accuracy = accuracy_score(y_val, y_pred)
@@ -140,7 +153,7 @@ def evaluate_on_validation(models, X_val_tfidf, y_val):
 # FINAL TEST EVALUATION
 # =============================================================================
 
-def evaluate_on_test(models, X_test_tfidf, y_test):
+def evaluate_on_test(models, X_test, y_test):
     """
     Final evaluation on test set
     
@@ -158,7 +171,7 @@ def evaluate_on_test(models, X_test_tfidf, y_test):
         
         # Predict / dự đoán
         start_time = time.time()
-        y_pred = model.predict(X_test_tfidf)
+        y_pred = model.predict(X_test)
         inference_time = (time.time() - start_time) / len(y_test) * 1000  # ms per sample
         
         # Metrics / số liệu 
@@ -333,10 +346,21 @@ def main():
         sublinear_tf=True  # Apply sublinear tf scaling
     )
     
-    X_train_tfidf = tfidf.fit_transform(train_df["text"])
-    X_val_tfidf = tfidf.transform(val_df["text"])
-    X_test_tfidf = tfidf.transform(test_df["text"])
-    
+    X_train_tfidf = tfidf.fit_transform(train_df["text_ml"])
+    X_val_tfidf = tfidf.transform(val_df["text_ml"])
+    X_test_tfidf = tfidf.transform(test_df["text_ml"])
+    # Lấy đặc trưng số
+    train_excl = np.array(train_df["num_exclamation"]).reshape(-1, 1)
+    train_quest = np.array(train_df["num_question"]).reshape(-1, 1)
+    val_excl   = np.array(val_df["num_exclamation"]).reshape(-1, 1)
+    val_quest  = np.array(val_df["num_question"]).reshape(-1, 1)
+    test_excl  = np.array(test_df["num_exclamation"]).reshape(-1, 1)
+    test_quest = np.array(test_df["num_question"]).reshape(-1, 1)
+
+    # Ghép TF-IDF với 2 cột số
+    X_train = hstack([X_train_tfidf, train_excl, train_quest])
+    X_val   = hstack([X_val_tfidf, val_excl, val_quest])
+    X_test  = hstack([X_test_tfidf, test_excl, test_quest])
     print(f"   Vocabulary size: {len(tfidf.vocabulary_)}")
     print(f"   Train matrix shape: {X_train_tfidf.shape}")
     print(f"   Val matrix shape:   {X_val_tfidf.shape}")
@@ -344,15 +368,15 @@ def main():
     
     # 3. Training
     print("\n[3/7] Training models...")
-    models, train_times = train_models(X_train_tfidf, train_df["label"])
+    models, train_times = train_models(X_train, train_df["label"])
     
     # 4. Validation
     print("\n[4/7] Validation evaluation...")
-    val_results = evaluate_on_validation(models, X_val_tfidf, val_df["label"])
+    val_results = evaluate_on_validation(models, X_val, val_df["label"])
     
     # 5. Final test
     print("\n[5/7] Final test evaluation...")
-    test_results = evaluate_on_test(models, X_test_tfidf, test_df["label"])
+    test_results = evaluate_on_test(models, X_test, test_df["label"])
     
     # 6. Comparison
     print("\n[6/7] Comparing models...")

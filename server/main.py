@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Fake News Detection API",
-    description="API phát hiện tin giả sử dụng nhiều model ML (Logistic Regression, SVM, BERT)",
+    description="API phát hiện tin giả sử dụng nhiều model ML (Logistic Regression, Linear SVC, BERT, LSTM)",
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/docs",
@@ -66,7 +66,7 @@ async def root():
             "models_status": "/health/models",
             "predict_url": "GET /predict/{model_name}/{url}"
         },
-        "available_models": ["logistic", "svm", "bert"],
+        "available_models": ["logistic", "linear_svc", "bert", "lstm"],
         "example": "GET /predict/bert/https://vnexpress.net/..."
     }
 

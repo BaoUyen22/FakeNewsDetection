@@ -33,7 +33,7 @@ async def load_baseline_models():
         # Load LinearSVC
         svm_path = baseline_dir / "linear_svc.pkl"
         print(f"Loading linear svc from {svm_path}...")
-        MODELS["svm"] = joblib.load(svm_path)
+        MODELS["linear_svc"] = joblib.load(svm_path)
         
         print("✓ Baseline models loaded successfully")
         return True
@@ -144,7 +144,9 @@ async def load_all_models():
     await load_lstm_model()
     
     print("="*50)
-    print(f"Total models loaded: {len([k for k in MODELS.keys() if k not in ['vectorizer', 'bert_tokenizer', 'device']])}")
+    model_names = ['logistic', 'linear_svc', 'bert', 'lstm']
+    loaded_models = [m for m in model_names if m in MODELS]
+    print(f"Total models loaded: {len(loaded_models)} - {', '.join(loaded_models)}")
     print("="*50 + "\n")
 
 
@@ -155,11 +157,13 @@ def get_model(model_name: str):
 
 def get_all_models_status():
     """Kiểm tra trạng thái tất cả models"""
+    model_names = ['logistic', 'linear_svc', 'bert', 'lstm']
+    loaded_count = len([m for m in model_names if m in MODELS])
     return {
         "logistic_regression": "loaded" if "logistic" in MODELS else "not_loaded",
-        "linear_svc": "loaded" if "svm" in MODELS else "not_loaded",
+        "linear_svc": "loaded" if "linear_svc" in MODELS else "not_loaded",
         "bert": "loaded" if "bert" in MODELS else "not_loaded",
         "lstm": "loaded" if "lstm" in MODELS else "not_loaded",
         "vectorizer": "loaded" if "vectorizer" in MODELS else "not_loaded",
-        "total_models": len([k for k in MODELS.keys() if k not in ['vectorizer', 'bert_tokenizer', 'device', 'lstm_word2idx', 'lstm_max_len', 'lstm_device']])
+        "total_models": loaded_count
     }

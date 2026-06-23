@@ -97,14 +97,12 @@ def real_model_prediction(text: str, model_name: str) -> dict:
     Real prediction using trained models from compare_all_models
     
     Args:
-        text: Raw text to predict
+        text: Raw text to predict (will be preprocessed by each model's predictor)
         model_name: Display name (e.g. "Linear SVC")
     
     Returns:
         dict with model, verdict, confidence, elapsed
     """
-    from utils.preprocessor import clean_text
-    
     # Get cached predictors (only loads once due to @st.cache_resource)
     baseline, deep_learning, bert = load_all_predictors()
     
@@ -114,27 +112,25 @@ def real_model_prediction(text: str, model_name: str) -> dict:
 
     
     try:
-        # Clean text first
-        cleaned_text = clean_text(text)
-        
-        if not cleaned_text or len(cleaned_text.strip()) < 10:
-            st.warning("⚠️ Text quá ngắn sau khi làm sạch. Vui lòng nhập thêm nội dung.")
+        # Validate raw input length
+        if not text or len(text.strip()) < 10:
+            st.warning("⚠️ Text quá ngắn. Vui lòng nhập thêm nội dung.")
             return None
         
         # Get predictor type and key
         predictor_type, predictor_key = MODEL_NAME_MAPPING.get(model_name, ("baseline", "LinearSVC"))
         
-        # Get predictions
+        # Get predictions (each predictor applies its own model-specific preprocessing)
         start_time = time.perf_counter()
         
         if predictor_type == "baseline" and baseline.models:
-            results = baseline.predict(cleaned_text)
+            results = baseline.predict(text)
             result = results.get(predictor_key, {})
         elif predictor_type == "deep_learning" and deep_learning.model:
-            results = deep_learning.predict(cleaned_text)
+            results = deep_learning.predict(text)
             result = results.get(predictor_key, {})
         elif predictor_type == "bert" and bert.model:
-            results = bert.predict(cleaned_text)
+            results = bert.predict(text)
             result = results.get(predictor_key, {})
         else:
             st.warning(f"⚠️ Model {model_name} not available. Using simulation.")
