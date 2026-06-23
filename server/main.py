@@ -66,7 +66,7 @@ async def root():
             "models_status": "/health/models",
             "predict_url": "GET /predict/{model_name}/{url}"
         },
-        "available_models": ["logistic", "svm", "bert"],
+        "available_models": ["logistic", "svm", "bert", "lstm"],
         "example": "GET /predict/bert/https://vnexpress.net/..."
     }
 

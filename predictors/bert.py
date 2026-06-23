@@ -40,7 +40,7 @@ class BERTPredictor:
         Predict with BERT model
         
         Args:
-            text: Cleaned text to predict
+            text: Raw text to predict (will be preprocessed)
         
         Returns:
             dict: Model name -> prediction results
@@ -49,14 +49,29 @@ class BERTPredictor:
             return {}
         
         try:
+            # Apply BERT-specific preprocessing (minimal)
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).parent.parent))
+            
+            from utils.preprocessor_for_model import BERTTextPreprocessor
+            
+            text_bert = BERTTextPreprocessor.transform(text)
+            
             # Tokenize
             inputs = self.tokenizer(
-                text,
+                text_bert,
                 truncation=True,
                 padding=True,
                 max_length=512,
                 return_tensors="pt"
-            ).to(self.device)
+            )
+            
+            # Remove token_type_ids if model doesn't need it (DistilBERT)
+            if "token_type_ids" in inputs and not hasattr(self.model.config, "type_vocab_size"):
+                inputs.pop("token_type_ids")
+            
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
             
             # Predict
             start_time = time.time()

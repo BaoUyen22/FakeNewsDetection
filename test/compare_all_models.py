@@ -20,7 +20,6 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from utils.preprocessor import clean_text
 from predictors import BaselinePredictor, DeepLearningPredictor, BERTPredictor
 from predictors.comparison import display_comparison
 
@@ -45,7 +44,7 @@ def main():
     print("="*80)
     print("\n📝 Instructions:")
     print("   1. Enter a news article (title + text)")
-    print("   2. Text will be automatically cleaned")
+    print("   2. Each model will apply its own preprocessing")
     print("   3. All models will predict and results will be compared")
     print("   4. Type 'exit' to quit")
     print("\n" + "="*80)
@@ -62,31 +61,27 @@ def main():
             print("⚠️  Please enter some text!")
             continue
         
-        # Clean text
-        cleaned_text = clean_text(user_input)
-        
-        if not cleaned_text.strip():
-            print("⚠️  Text is empty after cleaning!")
-            continue
+        # Use raw text - each predictor will apply its own preprocessing
+        raw_text = user_input
         
         # Collect predictions from all models
         all_results = {}
         
-        # Baseline models
-        baseline_results = baseline.predict(cleaned_text)
+        # Baseline models (will apply MLTextPreprocessor internally)
+        baseline_results = baseline.predict(raw_text)
         all_results.update(baseline_results)
         
-        # Deep Learning
-        dl_results = deep_learning.predict(cleaned_text)
+        # Deep Learning (will apply LSTMTextPreprocessor internally)
+        dl_results = deep_learning.predict(raw_text)
         all_results.update(dl_results)
         
-        # BERT
-        bert_results = bert.predict(cleaned_text)
+        # BERT (will apply BERTTextPreprocessor internally)
+        bert_results = bert.predict(raw_text)
         all_results.update(bert_results)
         
         # Display comparison
         if all_results:
-            display_comparison(cleaned_text, all_results)
+            display_comparison(raw_text, all_results)
         else:
             print("❌ No models available for prediction!")
 

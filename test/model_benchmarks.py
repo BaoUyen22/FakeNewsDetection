@@ -19,6 +19,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from scipy.sparse import hstack
 
 # Try to import psutil, but continue if not available
 try:
@@ -72,9 +73,23 @@ def evaluate_baseline(test_df):
         print(f"Test samples: {len(test_df)}")
         print(f"Test labels distribution: {test_df['label'].value_counts().to_dict()}")
         
+        # Apply MLTextPreprocessor to get cleaned text + features
+        from utils.preprocessor_for_model import MLTextPreprocessor
+        test_df[["text_ml", "num_exclamation", "num_question"]] = test_df["text"].apply(
+            lambda x: pd.Series(MLTextPreprocessor.transform(x))
+        )
+        
         # Load vectorizer
         vectorizer = joblib.load(models_dir / "tfidf_vectorizer.pkl")
-        X_test = vectorizer.transform(test_df["text"])
+        X_test_tfidf = vectorizer.transform(test_df["text_ml"])
+        
+        # Add num_exclamation and num_question features
+        from scipy.sparse import hstack
+        import numpy as np
+        test_excl = np.array(test_df["num_exclamation"]).reshape(-1, 1)
+        test_quest = np.array(test_df["num_question"]).reshape(-1, 1)
+        X_test = hstack([X_test_tfidf, test_excl, test_quest])
+        
         y_test = test_df["label"].values
         
         print(f"Features shape: {X_test.shape}")

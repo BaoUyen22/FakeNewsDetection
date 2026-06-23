@@ -1,3 +1,5 @@
+import os
+import sys
 import pandas as pd
 import torch
 from datasets import Dataset
@@ -8,8 +10,11 @@ from transformers import (
     Trainer
 )
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
-import os
 from pathlib import Path
+
+# Add parent directory to path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from utils.preprocessor_for_model import BERTTextPreprocessor
 
 # ============================================================
 # CONFIGURATION - Optimized for Google Colab GPU
@@ -91,9 +96,11 @@ def train_transformer():
     # Clean data
     train_df = train_df.dropna(subset=['text', 'label'])
     train_df['text'] = train_df['text'].astype(str)
+    train_df['text'] = train_df['text'].apply(BERTTextPreprocessor.transform)
     
     val_df = val_df.dropna(subset=['text', 'label'])
     val_df['text'] = val_df['text'].astype(str)
+    val_df['text'] = val_df['text'].apply(BERTTextPreprocessor.transform)
     
     print(f"   Train: {len(train_df):,} samples")
     print(f"   Val:   {len(val_df):,} samples")
@@ -101,7 +108,7 @@ def train_transformer():
     # ============================================================
     # 2. CREATE DATASETS
     # ============================================================
-    
+      
     print("\n[2/6] Creating HuggingFace datasets...")
     train_dataset = Dataset.from_pandas(train_df[['text', 'label']])
     val_dataset = Dataset.from_pandas(val_df[['text', 'label']])

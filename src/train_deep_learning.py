@@ -10,6 +10,7 @@ Train LSTM model with static word embeddings
 """
 
 import os
+import sys
 import torch
 import pandas as pd
 import time
@@ -17,8 +18,12 @@ import numpy as np
 
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report, confusion_matrix
 from torch import nn
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader as TorchDataLoader, TensorDataset
 from torch.nn.utils.rnn import pad_sequence
+
+# Add parent directory to path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from utils.preprocessor_for_model import LSTMTextPreprocessor
 
      
 # CONFIG
@@ -46,6 +51,7 @@ LEARNING_RATE = 0.001
 def load_data():
     """Load train, val, test datasets"""
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    sys.path.insert(0, base_dir)
     
     train_path = os.path.join(base_dir, TRAIN_PATH)
     val_path = os.path.join(base_dir, VAL_PATH)
@@ -60,7 +66,12 @@ def load_data():
         df["text"] = df["text"].fillna("").astype(str)
         df.drop(df[df["text"].str.strip().str.len() == 0].index, inplace=True)
         df.reset_index(drop=True, inplace=True)
-    
+
+    # Apply LSTM-specific preprocessing
+    train_df["text_lstm"] = train_df["text"].apply(LSTMTextPreprocessor.transform)
+    val_df["text_lstm"] = val_df["text"].apply(LSTMTextPreprocessor.transform)
+    test_df["text_lstm"] = test_df["text"].apply(LSTMTextPreprocessor.transform)
+
     return train_df, val_df, test_df
 
 
@@ -215,16 +226,16 @@ def train():
     
     # 2. Build vocabulary (FIT ONLY ON TRAIN)
     print(f"\n[2/7] Building vocabulary (vocab_size={VOCAB_SIZE})...")
-    word2idx, idx2word = build_vocabulary(train_df["text"], vocab_size=VOCAB_SIZE)
+    word2idx, idx2word = build_vocabulary(train_df["text_lstm"], vocab_size=VOCAB_SIZE)
     
     print(f"   Vocabulary size: {len(word2idx)}")
     print(f"   Sample words: {list(word2idx.keys())[:10]}")
     
     # 3. Convert texts to sequences
     print(f"\n[3/7] Converting texts to sequences (max_len={MAX_LEN})...")
-    X_train = texts_to_sequences(train_df["text"], word2idx, max_len=MAX_LEN)
-    X_val = texts_to_sequences(val_df["text"], word2idx, max_len=MAX_LEN)
-    X_test = texts_to_sequences(test_df["text"], word2idx, max_len=MAX_LEN)
+    X_train = texts_to_sequences(train_df["text_lstm"], word2idx, max_len=MAX_LEN)
+    X_val = texts_to_sequences(val_df["text_lstm"], word2idx, max_len=MAX_LEN)
+    X_test = texts_to_sequences(test_df["text_lstm"], word2idx, max_len=MAX_LEN)
     
     y_train = train_df["label"].values
     y_val = val_df["label"].values
@@ -255,7 +266,7 @@ def train():
     
     # 6. Create DataLoader
     train_data = TensorDataset(X_train_tensor, y_train_tensor)
-    train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
+    train_loader = TorchDataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
     
     # 7. Define model
     print(f"\n[4/7] Building LSTM model...")

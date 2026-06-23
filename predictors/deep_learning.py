@@ -76,7 +76,7 @@ class DeepLearningPredictor:
         Predict with LSTM model
         
         Args:
-            text: Cleaned text to predict
+            text: Raw text to predict (will be preprocessed)
         
         Returns:
             dict: Model name -> prediction results
@@ -85,8 +85,17 @@ class DeepLearningPredictor:
             return {}
         
         try:
+            # Apply LSTM-specific preprocessing
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).parent.parent))
+            
+            from utils.preprocessor_for_model import LSTMTextPreprocessor
+            
+            text_lstm = LSTMTextPreprocessor.transform(text)
+            
             # Convert to sequence
-            seq = self.texts_to_sequences(text, max_len=self.config["max_len"])
+            seq = self.texts_to_sequences(text_lstm, max_len=self.config["max_len"])
             seq_tensor = torch.LongTensor([seq]).to(self.device)
             
             # Predict

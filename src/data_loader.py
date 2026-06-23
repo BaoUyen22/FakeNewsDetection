@@ -109,10 +109,11 @@ class DataLoader:
             return ""
 
         value = unicodedata.normalize("NFKC", str(text))
-        value = value.lower()
         value = URL_PATTERN.sub(" ", value)
         value = HTML_PATTERN.sub(" ", value)
-        value = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in value)
+        value = re.sub(r"@[\w_]+", " ", value)
+        value = re.sub(r"#[\w_]+", " ", value)
+        value = re.sub(r"(.)\1{2,}", r"\1\1", value)
         value = MULTISPACE_PATTERN.sub(" ", value).strip()
         return value
 
@@ -261,7 +262,6 @@ def main() -> None:
         processed_dir=args.processed_dir,
         random_state=args.random_state,
     )
-
     #python src/data_loader.py --analyze-subject
     # Thống kê subject nếu được yêu cầu
     if args.analyze_subject:
